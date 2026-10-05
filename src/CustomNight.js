@@ -1,161 +1,290 @@
-import React from 'react';
-import styles from "./css/CustomNight.module.css"
+import React, { useState } from "react";
+import styles from "./css/CustomNight.module.css";
+import sounds from "./components/SoundEffects";
 
-import Freddy from "./media/Textures/CustomNight/freddy.png";
-import Bonnie from "./media/Textures/CustomNight/bonnie.png";
-import Chica from "./media/Textures/CustomNight/chica.png";
-import Foxy from "./media/Textures/CustomNight/foxy.png";
-
-import goldenFreddyJumpscare from "./media/Sounds/golden_freddy.ogg";
+import FreddyImg from "./media/Textures/CustomNight/freddy.png";
+import BonnieImg from "./media/Textures/CustomNight/bonnie.png";
+import ChicaImg from "./media/Textures/CustomNight/chica.png";
+import FoxyImg from "./media/Textures/CustomNight/foxy.png";
+import GoldenFreddyImg from "./media/Textures/golden_freddy.webp";
 
 const images = {
-    Freddy,
-    Bonnie,
-    Chica,
-    Foxy
-}
-
-const AnimatronicContainer = (props) => {
-    const {range, changeRange, character} = props;
-
-    return (
-        <div className={styles.animatronic}>
-            <img
-                alt="Five Nights At Freddy's"
-                src={images[character]}
-                title={character}
-                alt={character}
-            />
-            
-            <div className={styles.range_buttons}>
-                <button onClick={() => {changeRange(-1, character)}} disabled={range === 0}> {"<"} </button>
-                <span> {range} </span>
-                <button onClick={() => {changeRange(+1, character)}} disabled={range === 20}> {">"} </button>
-            </div>
-        </div>
-    )
+  Freddy: FreddyImg,
+  Bonnie: BonnieImg,
+  Chica: ChicaImg,
+  Foxy: FoxyImg,
 };
 
-const CustomNight = ({state, setStart}) => {
-    const [goldenFreddy, setGoldenFreddy] = React.useState(false);
-    const changeMode = (value) => {
+const AnimatronicCard = ({ character, range, onChange }) => {
+  return (
+    <div className={styles.animatronic}>
+      <img
+        src={images[character]}
+        title={character}
+        alt={character}
+        style={{ width: "120px", height: "120px", objectFit: "contain" }}
+      />
+      <div style={{ color: "#fff", fontWeight: "bold", fontSize: "18px", margin: "4px 0" }}>
+        {character}
+      </div>
+      <div className={styles.range_buttons}>
+        <button
+          onClick={() => onChange(character, -1)}
+          disabled={range <= 0}
+          style={{ cursor: range <= 0 ? "not-allowed" : "pointer" }}
+        >
+          &lt;
+        </button>
+        <span style={{ fontSize: "24px", minWidth: "36px", textAlign: "center" }}>
+          {range}
+        </span>
+        <button
+          onClick={() => onChange(character, +1)}
+          disabled={range >= 20}
+          style={{ cursor: range >= 20 ? "not-allowed" : "pointer" }}
+        >
+          &gt;
+        </button>
+      </div>
+    </div>
+  );
+};
 
-        let animatronics = {};
+const CustomNight = ({ state, onStartGame, onBackToMenu }) => {
+  const [goldenFreddyKill, setGoldenFreddyKill] = useState(false);
 
-        switch(value) {
-            case "EASY": 
-                animatronics = {Bonnie: 2, Freddy: 2, Chica: 2, Foxy: 2};
-                break;
-            case "NORMAL": 
-                animatronics = {Bonnie: 10, Freddy: 10, Chica: 10, Foxy: 10};
-                break;
-            case "HARD": 
-                animatronics = {Bonnie: 15, Freddy: 15, Chica: 15, Foxy: 15};
-                break;
-            case "IMPOSSIBLE":
-                animatronics = {Bonnie: 20, Freddy: 20, Chica: 20, Foxy: 20};
-                break;
-            default: 
-                return;
-        }
+  const changeRange = (character, delta) => {
+    sounds.playCameraSwitch();
+    state.setStages((prev) => {
+      const current = prev[character] || 0;
+      const nextVal = Math.max(0, Math.min(20, current + delta));
+      return {
+        ...prev,
+        mode: "CUSTOM",
+        [character]: nextVal,
+      };
+    });
+  };
 
-        state.setStages((stages) => ({...animatronics, mode: value}));
-    };
+  const applyPreset = (f, b, c, fx, name) => {
+    sounds.playCameraSwitch();
+    state.setStages({
+      Freddy: f,
+      Bonnie: b,
+      Chica: c,
+      Foxy: fx,
+      mode: "CUSTOM",
+      night: "CUSTOM",
+      presetName: name,
+    });
+  };
 
-    const changeRange = (value, character) => {
-        const handleValue = (state, value) => 
-            (state === 0 && value < 0) || (state === 20 && value > 0) ? state : state + value
-        
-
-        state.setStages((stages) => ({...stages, mode: "CUSTOM", [character]: handleValue(stages[character], value)}));
+  const handleReady = () => {
+    sounds.playCameraSwitch();
+    // 1/9/8/7 Golden Freddy Easter Egg check
+    if (
+      state.ranges.Freddy === 1 &&
+      state.ranges.Bonnie === 9 &&
+      state.ranges.Chica === 8 &&
+      state.ranges.Foxy === 7
+    ) {
+      sounds.playGoldenFreddy();
+      setGoldenFreddyKill(true);
+      setTimeout(() => {
+        setGoldenFreddyKill(false);
+        onBackToMenu();
+      }, 4000);
+      return;
     }
 
-    const hasWon = (mode) => {
-        const victories = JSON.parse(localStorage.getItem("victories")) || {};
+    onStartGame();
+  };
 
-        return victories[mode] || " ";
-    }
-    
-    const handleStart = () => {
-        if (
-            state.ranges.Freddy === 1 &&
-            state.ranges.Bonnie === 9 &&
-            state.ranges.Chica === 8 &&
-            state.ranges.Foxy === 7
-        ) {
-            const golden = new Audio(goldenFreddyJumpscare);
-            golden.play();
-            return setGoldenFreddy(true);
-        }
-        setStart(true);
-    }
-
-    if(goldenFreddy) return <GoldenFreddy setGoldenFreddy={setGoldenFreddy} />;
-
+  if (goldenFreddyKill) {
     return (
-        <div className={styles.custom_night_container}>
+      <div
+        style={{
+          width: "100vw",
+          height: "100vh",
+          backgroundColor: "#000",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <img
+          alt="Golden Freddy"
+          src={GoldenFreddyImg}
+          style={{
+            maxWidth: "95vw",
+            maxHeight: "95vh",
+            objectFit: "contain",
+            animation: "glitch 0.1s infinite",
+          }}
+        />
+      </div>
+    );
+  }
 
-                <a href="https://github.com/wellsousaaa/Five-Nights-at-Freddys-Web" target="_blank" className={styles.github_icon}>
-                    <img src="https://icon-library.com/images/github-icon-white/github-icon-white-6.jpg" width="50" height="50" />
-                </a>
-            
-            <h1>{"Five Nights at Freddy's Web"}</h1>
+  return (
+    <div className={styles.custom_night_container}>
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          width: "90%",
+          maxWidth: "900px",
+          margin: "0 auto",
+        }}
+      >
+        <button
+          onClick={onBackToMenu}
+          style={{
+            background: "rgba(255,255,255,0.1)",
+            border: "1px solid #666",
+            color: "#fff",
+            padding: "8px 16px",
+            fontSize: "14px",
+            cursor: "pointer",
+            fontFamily: "'Courier New', Courier, monospace",
+          }}
+        >
+          &lt;&lt; BACK TO MENU
+        </button>
 
-        <div className={styles.animatronics_container}>
-            <AnimatronicContainer character={"Freddy"} range={state.ranges.Freddy} {...{changeRange}} />
-            <AnimatronicContainer character={"Bonnie"} range={state.ranges.Bonnie} {...{changeRange}} />
-            <AnimatronicContainer character={"Chica"} range={state.ranges.Chica} {...{changeRange}} />
-            <AnimatronicContainer character={"Foxy"} range={state.ranges.Foxy} {...{changeRange}} />
-        </div>
-            
-            
-            <div className={styles.start_screen} style={{margin: "2% auto 1% auto"}}>
-                <button className={styles.ready_button} onClick={handleStart}>
-                    READY {"▶"}
-                </button>
-            </div>
+        <h1
+          style={{
+            fontSize: "36px",
+            letterSpacing: "3px",
+            color: "#fff",
+            margin: 0,
+            textShadow: "0 0 10px rgba(255,255,255,0.4)",
+          }}
+        >
+          CUSTOM NIGHT (7th Night)
+        </h1>
+        <div style={{ width: "120px" }} />
+      </div>
 
-            <div className={styles.start_screen}>
-                <button onClick={() => {
-                    changeMode("EASY")
-                }} data-selected={state.ranges.mode === "EASY"}>
-                    EASY {hasWon("EASY")}
-                </button>
-                <button onClick={() => {
-                    changeMode("NORMAL")
-                }} data-selected={state.ranges.mode === "NORMAL"}>
-                    NORMAL {hasWon("NORMAL")}
-                </button>
-                <button onClick={() => {
-                    changeMode("HARD")
-                }} data-selected={state.ranges.mode === "HARD"}>
-                    HARD {hasWon("HARD")}
-                </button>
-                <button onClick={() => {
-                    changeMode("IMPOSSIBLE")
-                }} data-selected={state.ranges.mode === "IMPOSSIBLE"}>
-                    IMPOSSIBLE {hasWon("IMPOSSIBLE")}
-                </button>
-            </div>
+      {/* 4 Animatronics AI setting */}
+      <div className={styles.animatronics_container} style={{ margin: "24px auto" }}>
+        <AnimatronicCard
+          character="Freddy"
+          range={state.ranges.Freddy}
+          onChange={changeRange}
+        />
+        <AnimatronicCard
+          character="Bonnie"
+          range={state.ranges.Bonnie}
+          onChange={changeRange}
+        />
+        <AnimatronicCard
+          character="Chica"
+          range={state.ranges.Chica}
+          onChange={changeRange}
+        />
+        <AnimatronicCard
+          character="Foxy"
+          range={state.ranges.Foxy}
+          onChange={changeRange}
+        />
+      </div>
 
-            <footer className={styles.footer}>
-                <p>Made by Wendell de Sousa | 2021 </p>
-                {/* <p>Five Nights at Freddy's © Scott Cawthon</p> */}
-            </footer>
-        </div>
-    )
-}; 
+      {/* READY Button */}
+      <div style={{ textAlign: "center", margin: "16px 0" }}>
+        <button
+          onClick={handleReady}
+          className={styles.ready_button}
+          style={{
+            fontSize: "32px",
+            padding: "12px 48px",
+            letterSpacing: "4px",
+            background: "#166534",
+            color: "#fff",
+            border: "2px solid #22c55e",
+            borderRadius: "4px",
+            cursor: "pointer",
+            textShadow: "0 0 8px #22c55e",
+          }}
+        >
+          READY &gt;&gt;
+        </button>
+      </div>
+
+      {/* Presets */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          gap: "12px",
+          flexWrap: "wrap",
+          margin: "12px 0",
+        }}
+      >
+        <button
+          onClick={() => applyPreset(20, 20, 20, 20, "4/20")}
+          style={{
+            background: "#7f1d1d",
+            color: "#fee2e2",
+            border: "1px solid #ef4444",
+            padding: "8px 16px",
+            fontSize: "14px",
+            cursor: "pointer",
+            fontWeight: "bold",
+          }}
+        >
+          4/20 MODE (MAX)
+        </button>
+        <button
+          onClick={() => applyPreset(10, 10, 10, 10, "NORMAL")}
+          style={{
+            background: "rgba(255,255,255,0.1)",
+            color: "#fff",
+            border: "1px solid #888",
+            padding: "8px 16px",
+            fontSize: "14px",
+            cursor: "pointer",
+          }}
+        >
+          ALL 10 (NORMAL)
+        </button>
+        <button
+          onClick={() => applyPreset(5, 5, 5, 5, "EASY")}
+          style={{
+            background: "rgba(255,255,255,0.1)",
+            color: "#fff",
+            border: "1px solid #888",
+            padding: "8px 16px",
+            fontSize: "14px",
+            cursor: "pointer",
+          }}
+        >
+          ALL 5 (EASY)
+        </button>
+        <button
+          onClick={() => applyPreset(0, 0, 0, 0, "ZERO")}
+          style={{
+            background: "rgba(255,255,255,0.1)",
+            color: "#fff",
+            border: "1px solid #888",
+            padding: "8px 16px",
+            fontSize: "14px",
+            cursor: "pointer",
+          }}
+        >
+          ALL 0 (EXPLORE)
+        </button>
+      </div>
+
+      <footer className={styles.footer} style={{ marginTop: "24px" }}>
+        <p style={{ color: "#777", fontSize: "12px" }}>
+          Tip: Set AI levels 0–20. Higher AI values increase movement opportunity frequency.
+        </p>
+      </footer>
+    </div>
+  );
+};
 
 export default CustomNight;
-
-function GoldenFreddy({setGoldenFreddy}) {
-    React.useEffect(() => {
-        setTimeout(() => {
-            window.open("about:blank", "_self");
-            window.close();
-            setGoldenFreddy(false);
-        }, 5000);
-    }, [])
-
-    return <div className={styles.golden_freddy} />
-}

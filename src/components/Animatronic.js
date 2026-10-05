@@ -1,228 +1,439 @@
-import React, { useState, useEffect } from "react";
-import Functions from "./Functions";
-import Media from "./Media";
+import React, { useEffect, useRef } from "react";
 import { connect } from "react-redux";
-
-let FreddyIterator = Functions.Freddy();
-let BonnieIterator = Functions.Bonnie();
-let ChicaIterator = Functions.Chica();
-let FoxyIterator = Functions.Foxy();
-
-FreddyIterator.next();
-
-let FreddyTime = 10000;
-let BonnieTime = 5000;
-let ChicaTime = 7300;
-let FoxyTime = 13000;
-
-const ranges = {
-  Freddy: 1,
-  Bonnie: 1,
-  Chica: 2,
-  Foxy: 1,
-}
-
-let isBlackout = false;
-let isGameOver = false;
+import sounds from "./SoundEffects";
 
 function Animatronic({
-  animatronics,
-  config,
-  handleJumpscare,
-  isThisDoorOpen,
+  stages,
+  hour,
+  blackout,
+  gameOver,
+  isCameraOpen,
+  currentCamera,
+  leftDoor,
+  rightDoor,
+  foxyBlockCount,
   dispatch,
-  stages
+  handleJumpscare,
+  onFoxyDoorBash,
 }) {
-  const { hour, gameOver, blackout } = config;
+  // Current AI levels
+  const aiRef = useRef({
+    Freddy: stages.Freddy || 0,
+    Bonnie: stages.Bonnie || 0,
+    Chica: stages.Chica || 0,
+    Foxy: stages.Foxy || 0,
+  });
+
+  // Current node positions
+  const posRef = useRef({
+    Bonnie: "Stage",
+    Chica: "Stage",
+    Freddy: "Stage",
+    FoxyStage: 0, // 0, 1, 2, 3
+  });
+
+  // In-office infiltration state (sneaked in while camera up)
+  const infiltratedRef = useRef({
+    Bonnie: false,
+    Chica: false,
+    Freddy: false,
+  });
+
+  // Foxy sprint countdown
+  const foxySprintTimerRef = useRef(null);
+  const foxyLowerDelayRef = useRef(0);
+
+  // Sync doors / camera state to refs for interval callbacks
+  const stateRef = useRef({
+    isCameraOpen,
+    currentCamera,
+    leftDoor,
+    rightDoor,
+    blackout,
+    gameOver,
+    foxyBlockCount,
+  });
 
   useEffect(() => {
-    ranges["Freddy"] = stages.Freddy;
-    ranges["Bonnie"] = stages.Bonnie;
-    ranges["Chica"] = stages.Chica;
-    ranges["Foxy"] = stages.Foxy;
-
-    if(stages.Bonnie) willMove("Bonnie", BonnieIterator, BonnieTime);
-    if(stages.Chica) willMove("Chica", ChicaIterator, ChicaTime);
-    if(stages.Foxy) willMove("Foxy", FoxyIterator, FoxyTime, true);
-    if(stages.Freddy && stages.Chica && stages.Bonnie)willMove("Freddy", FreddyIterator, FreddyTime, true);
-
-    return () => {
-      FreddyIterator = Functions.Freddy();
-      BonnieIterator = Functions.Bonnie();
-      ChicaIterator = Functions.Chica();
-      FoxyIterator = Functions.Foxy();
-
-      FreddyIterator.next();
-
-      FreddyTime = 10000;
-      BonnieTime = 5000;
-      ChicaTime = 7300;
-      FoxyTime = 13000;
-      ranges["Freddy"] = stages.Freddy;
-      ranges["Bonnie"] = stages.Bonnie;
-      ranges["Chica"] = stages.Chica;
-      ranges["Foxy"] = stages.Foxy;
-
-      isBlackout = false;
-      isGameOver = false;
+    stateRef.current = {
+      isCameraOpen,
+      currentCamera,
+      leftDoor,
+      rightDoor,
+      blackout,
+      gameOver,
+      foxyBlockCount,
     };
+  }, [isCameraOpen, currentCamera, leftDoor, rightDoor, blackout, gameOver, foxyBlockCount]);
+
+  // Track when monitor lowers to add Foxy stall delay
+  useEffect(() => {
+    if (!isCameraOpen) {
+      // Monitor just lowered -> stall Foxy for 1.0 to 10 seconds
+      const randomDelay = Math.random() * 5 + 1.0;
+      foxyLowerDelayRef.current = Date.now() + randomDelay * 1000;
+
+      // If Bonnie or Chica infiltrated while monitor was up, instant jumpscare on lowering monitor!
+      if (infiltratedRef.current.Bonnie && !stateRef.current.gameOver && !stateRef.current.blackout) {
+        handleJumpscare("Bonnie");
+      } else if (infiltratedRef.current.Chica && !stateRef.current.gameOver && !stateRef.current.blackout) {
+        handleJumpscare("Chica");
+      }
+    }
+  }, [isCameraOpen, handleJumpscare]);
+
+  // Hourly AI scaling per spec:
+  // Bonnie: +1 at 2 AM, +1 at 3 AM, +1 at 4 AM
+  // Chica: +1 at 3 AM, +1 at 4 AM
+  // Foxy: +1 at 3 AM, +1 at 4 AM
+  // Freddy: no hourly increase
+  useEffect(() => {
+    let bonnieBonus = 0;
+    let chicaBonus = 0;
+    let foxyBonus = 0;
+
+    if (hour >= 2) bonnieBonus += 1;
+    if (hour >= 3) {
+      bonnieBonus += 1;
+      chicaBonus += 1;
+      foxyBonus += 1;
+    }
+    if (hour >= 4) {
+      bonnieBonus += 1;
+      chicaBonus += 1;
+      foxyBonus += 1;
+    }
+
+    aiRef.current = {
+      Freddy: stages.Freddy || 0,
+      Bonnie: Math.min(20, (stages.Bonnie || 0) + bonnieBonus),
+      Chica: Math.min(20, (stages.Chica || 0) + chicaBonus),
+      Foxy: Math.min(20, (stages.Foxy || 0) + foxyBonus),
+    };
+  }, [hour, stages]);
+
+  // Kitchen sounds loop: when Chica or Freddy is in Kitchen
+  useEffect(() => {
+    const kitchenInterval = setInterval(() => {
+      if (stateRef.current.blackout || stateRef.current.gameOver) return;
+      const chicaInKitchen = posRef.current.Chica === "Kitchen";
+      const freddyInKitchen = posRef.current.Freddy === "Kitchen";
+
+      if (chicaInKitchen || freddyInKitchen) {
+        sounds.playKitchenClatter();
+      }
+    }, 4500);
+
+    return () => clearInterval(kitchenInterval);
   }, []);
 
+  // Golden Freddy chance check when viewing CAM 2B
   useEffect(() => {
-    if (hour === 2) {
-      FreddyTime = 9500;
-      BonnieTime = 4700;
-      ChicaTime = 6800;
-      FoxyTime = 10000;
-
-      
-      ranges["Bonnie"] = ranges["Bonnie"] + 1;
-      ranges["Chica"] = ranges["Chica"] + 1;
-    } else if (hour === 4) {
-      ranges["Bonnie"] = ranges["Bonnie"] + 2;
-      ranges["Chica"] = ranges["Chica"] + 2;
-      ranges["Freddy"] = ranges["Freddy"] + 1;
-      ranges["Foxy"] = ranges["Foxy"] + 1;
-    } else if (hour === 5) {
-      ranges["Bonnie"] = ranges["Bonnie"] + 2;
-      ranges["Chica"] = ranges["Chica"] + 2;
-      ranges["Freddy"] = ranges["Freddy"] + 2;
-      ranges["Foxy"] = ranges["Foxy"] + 2;
-    }
-  }, [hour]);
-
-  useEffect(() => {
-    if (gameOver) isGameOver = gameOver;
-  }, [gameOver]);
-
-  const changeAnimatronic = (func) => {
-    dispatch({ type: "CHANGE_ANIMATRONICS_MOVING", content: true });
-
-    func();
-
-    setTimeout(() => {
-      dispatch({
-        type: "CHANGE_ANIMATRONICS_MOVING",
-        content: false,
-      });
-    }, 1500);
-  };
-
-  const animatronicFailed = (character) => {
-    changeAnimatronic(() => {
-      dispatch({
-        type: "CHANGE_ANIMATRONIC",
-        animatronic: character,
-        animatronicState: {
-          door: false,
-          camera:
-            character === "Freddy"
-              ? "Stage"
-              : character === "Foxy"
-              ? ""
-              : "Dinning Area",
-          jumpscare: false,
-        },
-      });
-
-      if (character === "Bonnie") {
-        BonnieIterator = Functions.Bonnie();
-        willMove("Bonnie", BonnieIterator, BonnieTime);
-      } else if (character === "Chica") {
-        ChicaIterator = Functions.Chica();
-        willMove("Chica", ChicaIterator, ChicaTime);
-      } else if (character === "Foxy") {
-        FoxyIterator = Functions.Foxy();
-        Media.Sounds.FoxyPunch.play();
-        willMove("Foxy", FoxyIterator, FoxyTime, true);
-      } else if (character === "Freddy") {
-        FreddyIterator = Functions.Freddy();
-        FreddyIterator.next();
-        willMove("Freddy", FreddyIterator, FreddyTime, true);
+    if (isCameraOpen && currentCamera === "W. Hall Corner" && !stateRef.current.blackout) {
+      // 1.5% chance to trigger Golden Freddy
+      if (Math.random() < 0.015) {
+        dispatch({
+          type: "SET_GOLDEN_FREDDY",
+          content: { active: true, jumpscare: false },
+        });
       }
-    });
-  };
-
-  const freddyLaugh = () => {
-    if (isBlackout) return;
-    let FreddyNumber = Math.floor(Math.random() * 2);
-    if (FreddyNumber == 0) {
-      Media.Sounds.FreddyLaugh1.play();
-    } else {
-      Media.Sounds.FreddyLaugh2.play();
     }
+  }, [isCameraOpen, currentCamera, dispatch]);
+
+  // Visual static burst dispatch helper
+  const triggerMovementStatic = () => {
+    dispatch({ type: "CHANGE_ANIMATRONICS_MOVING", content: true });
+    sounds.playCameraGarble();
+    setTimeout(() => {
+      dispatch({ type: "CHANGE_ANIMATRONICS_MOVING", content: false });
+    }, 1200);
   };
+
+  // ==========================================
+  // BONNIE & CHICA CHECK (Every 300 frames ≈ 5.0s)
+  // ==========================================
   useEffect(() => {
-    if (blackout) isBlackout = true;
-  }, [blackout]);
+    const interval = setInterval(() => {
+      const { blackout, gameOver, leftDoor, rightDoor, isCameraOpen } = stateRef.current;
+      if (blackout || gameOver) return;
 
-  function willMove (character, iterator, animaTime) {
-    const thisInterval = setInterval(() => {
-      const max = character === "Bonnie" || character === "Chica" ? 22 : 30;
-      let luckyNumber = Math.floor(Math.random() * max);
+      // --- BONNIE MOVEMENT ---
+      const bonnieRoll = Math.floor(Math.random() * 20) + 1;
+      if (bonnieRoll <= aiRef.current.Bonnie) {
+        const currentPos = posRef.current.Bonnie;
+        let nextPos = currentPos;
 
-      let condition = luckyNumber < ranges[character] && !animatronics[character].door;
+        if (currentPos === "Stage") {
+          nextPos = "Dinning Area";
+        } else if (currentPos === "Dinning Area") {
+          // Can visit Backstage, Supply Closet, or West Hall
+          const choices = ["Backstage", "Supply Closet", "West Hall"];
+          nextPos = choices[Math.floor(Math.random() * choices.length)];
+        } else if (currentPos === "Backstage" || currentPos === "Supply Closet") {
+          nextPos = "West Hall";
+        } else if (currentPos === "West Hall") {
+          nextPos = "W. Hall Corner";
+        } else if (currentPos === "W. Hall Corner") {
+          nextPos = "Door"; // At Office Left Door blind spot
+        } else if (currentPos === "Door") {
+          // If left door is closed -> Bonnie is blocked and retreats!
+          if (leftDoor) {
+            nextPos = Math.random() < 0.5 ? "Dinning Area" : "West Hall";
+          } else {
+            // Door is open!
+            if (isCameraOpen) {
+              // Sneaks inside office!
+              infiltratedRef.current.Bonnie = true;
+              dispatch({ type: "JAM_DOOR", side: "left" });
+            } else {
+              // Direct jumpscare!
+              handleJumpscare("Bonnie");
+              return;
+            }
+          }
+        }
 
-      let newPlace;
-      if (condition) {
-        changeAnimatronic(() => {
-          newPlace = iterator.next().value;
-
-          const newState = {
-            door: newPlace === "Door" || newPlace === "_3",
-            jumpscare: false,
-            camera: newPlace,
-          };
+        if (nextPos !== currentPos) {
+          posRef.current.Bonnie = nextPos;
+          triggerMovementStatic();
           dispatch({
             type: "CHANGE_ANIMATRONIC",
-            animatronic: character,
-            animatronicState: newState,
+            animatronic: "Bonnie",
+            animatronicState: {
+              camera: nextPos === "Door" ? null : nextPos,
+              door: nextPos === "Door",
+              jumpscare: false,
+            },
           });
+        }
+      }
+
+      // --- CHICA MOVEMENT ---
+      const chicaRoll = Math.floor(Math.random() * 20) + 1;
+      if (chicaRoll <= aiRef.current.Chica) {
+        const currentPos = posRef.current.Chica;
+        let nextPos = currentPos;
+
+        if (currentPos === "Stage") {
+          nextPos = "Dinning Area";
+        } else if (currentPos === "Dinning Area") {
+          // Can move to Restrooms or Kitchen
+          nextPos = Math.random() < 0.5 ? "Restrooms" : "Kitchen";
+        } else if (currentPos === "Restrooms" || currentPos === "Kitchen") {
+          nextPos = "East Hall";
+        } else if (currentPos === "East Hall") {
+          nextPos = "E. Hall Corner";
+        } else if (currentPos === "E. Hall Corner") {
+          nextPos = "Door"; // At Office Right Door blind spot
+        } else if (currentPos === "Door") {
+          // If right door is closed -> Chica is blocked and retreats!
+          if (rightDoor) {
+            nextPos = Math.random() < 0.5 ? "Dinning Area" : "Restrooms";
+          } else {
+            // Door is open!
+            if (isCameraOpen) {
+              // Sneaks inside office!
+              infiltratedRef.current.Chica = true;
+              dispatch({ type: "JAM_DOOR", side: "right" });
+            } else {
+              // Direct jumpscare!
+              handleJumpscare("Chica");
+              return;
+            }
+          }
+        }
+
+        if (nextPos !== currentPos) {
+          posRef.current.Chica = nextPos;
+          triggerMovementStatic();
+          dispatch({
+            type: "CHANGE_ANIMATRONIC",
+            animatronic: "Chica",
+            animatronicState: {
+              camera: nextPos === "Door" ? null : nextPos,
+              door: nextPos === "Door",
+              jumpscare: false,
+            },
+          });
+        }
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [dispatch, handleJumpscare]);
+
+  // ==========================================
+  // FREDDY CHECK (Every 180 frames ≈ 3.0s)
+  // ==========================================
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const { blackout, gameOver, isCameraOpen, currentCamera, rightDoor } = stateRef.current;
+      if (blackout || gameOver) return;
+
+      const currentPos = posRef.current.Freddy;
+
+      // Camera Stalling Rule: Freddy WILL NOT MOVE while camera is watching his current node!
+      if (isCameraOpen && currentCamera === currentPos) {
+        return; // Stalled by player camera!
+      }
+
+      const roll = Math.floor(Math.random() * 20) + 1;
+      if (roll <= aiRef.current.Freddy) {
+        let nextPos = currentPos;
+
+        if (currentPos === "Stage") {
+          nextPos = "Dinning Area";
+        } else if (currentPos === "Dinning Area") {
+          nextPos = "Restrooms";
+        } else if (currentPos === "Restrooms") {
+          nextPos = "Kitchen";
+        } else if (currentPos === "Kitchen") {
+          nextPos = "East Hall";
+        } else if (currentPos === "East Hall") {
+          nextPos = "E. Hall Corner";
+        } else if (currentPos === "E. Hall Corner") {
+          // Preparing to enter office!
+          if (rightDoor) {
+            // Blocked by right door!
+            // Freddy stays at corner or retreats
+            return;
+          } else {
+            // Right door is open! Freddy enters!
+            if (!isCameraOpen) {
+              handleJumpscare("Freddy");
+              return;
+            } else {
+              infiltratedRef.current.Freddy = true;
+            }
+          }
+        }
+
+        if (nextPos !== currentPos) {
+          posRef.current.Freddy = nextPos;
+          sounds.playFreddyLaugh();
+          triggerMovementStatic();
+
+          dispatch({
+            type: "CHANGE_ANIMATRONIC",
+            animatronic: "Freddy",
+            animatronicState: {
+              camera: nextPos,
+              door: nextPos === "E. Hall Corner",
+              jumpscare: false,
+            },
+          });
+        }
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [dispatch, handleJumpscare]);
+
+  // ==========================================
+  // FOXY CHECK (Every 90 frames ≈ 1.5s)
+  // ==========================================
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const { blackout, gameOver, isCameraOpen } = stateRef.current;
+      if (blackout || gameOver) return;
+
+      // Foxy is frozen while monitor is UP!
+      if (isCameraOpen) return;
+
+      // Foxy also delayed after monitor lowers
+      if (Date.now() < foxyLowerDelayRef.current) return;
+
+      // If already in sprint mode, handled by sprint timer
+      if (posRef.current.FoxyStage >= 3) return;
+
+      const roll = Math.floor(Math.random() * 20) + 1;
+      if (roll <= aiRef.current.Foxy) {
+        const nextStage = posRef.current.FoxyStage + 1;
+        posRef.current.FoxyStage = nextStage;
+
+        let cameraState = "";
+        if (nextStage === 1) cameraState = "_1";
+        else if (nextStage === 2) cameraState = "_2";
+        else if (nextStage >= 3) cameraState = "_3";
+
+        dispatch({
+          type: "CHANGE_ANIMATRONIC",
+          animatronic: "Foxy",
+          animatronicState: {
+            camera: cameraState,
+            stage: nextStage,
+            isRunning: nextStage >= 3,
+            door: false,
+            jumpscare: false,
+          },
         });
 
-        if (character === "Freddy") freddyLaugh();
+        // If Foxy reached Stage 3 -> SPRINT DOWN WEST HALL!
+        if (nextStage >= 3) {
+          dispatch({ type: "SET_FOXY_HALLWAY", content: true });
+
+          // Start 2.8s sprint countdown
+          if (foxySprintTimerRef.current) clearTimeout(foxySprintTimerRef.current);
+
+          foxySprintTimerRef.current = setTimeout(() => {
+            dispatch({ type: "SET_FOXY_HALLWAY", content: false });
+            const { leftDoor: doorClosed, gameOver: isOver, blackout: isDark } = stateRef.current;
+            if (isOver || isDark) return;
+
+            if (doorClosed) {
+              // SUCCESSFUL BLOCK!
+              // Play door bash sound
+              sounds.playFoxyBang();
+
+              // Calculate power steal: 1 + 5 * (blockCount - 1)
+              const count = stateRef.current.foxyBlockCount || 1;
+              const stealPercent = 1 + 5 * (count - 1);
+              onFoxyDoorBash(stealPercent);
+
+              dispatch({ type: "FOXY_BLOCK" });
+
+              // Reset Foxy to Stage 0 or 1
+              const resetStage = Math.random() < 0.5 ? 0 : 1;
+              posRef.current.FoxyStage = resetStage;
+              dispatch({
+                type: "CHANGE_ANIMATRONIC",
+                animatronic: "Foxy",
+                animatronicState: {
+                  camera: resetStage === 0 ? "" : "_1",
+                  stage: resetStage,
+                  isRunning: false,
+                  door: false,
+                  jumpscare: false,
+                },
+              });
+            } else {
+              // DOOR IS OPEN -> FOXY JUMPSCARE!
+              handleJumpscare("Foxy");
+            }
+          }, 2800);
+        }
       }
+    }, 1500);
 
-      if (isBlackout || isGameOver) clearInterval(thisInterval);
+    return () => {
+      clearInterval(interval);
+      if (foxySprintTimerRef.current) clearTimeout(foxySprintTimerRef.current);
+    };
+  }, [dispatch, handleJumpscare, onFoxyDoorBash]);
 
-      if (newPlace === "Door" || newPlace === "_3") {
-        if (!isBlackout) checkDoors(character);
-        clearInterval(thisInterval);
-      }
-    }, animaTime);
-  };
-
-  async function checkDoors(character) {
-    const door =
-      character === "Bonnie" || character === "Foxy" ? "leftDoor" : "rightDoor";
-
-    setTimeout(async () => {
-      const isDoorOpen = await isThisDoorOpen(door);
-      if (!isDoorOpen) {
-        setTimeout(async () => {
-          const isDoorOpen = await isThisDoorOpen(door);
-          if (!isDoorOpen) {
-            setTimeout(async () => {
-              const isDoorOpen = await isThisDoorOpen(door);
-              if (!isDoorOpen) {
-                handleJumpscare(character);
-              } else animatronicFailed(character);
-            }, 3000);
-          } else animatronicFailed(character);
-        }, 5000);
-      } else animatronicFailed(character);
-    }, 10000);
-  }
-
-  return <></>;
+  return null;
 }
 
 const mapStateToProps = (state) => {
   return {
+    hour: state.configReducer.hour,
+    blackout: state.configReducer.blackout,
+    gameOver: state.configReducer.gameOver,
+    isCameraOpen: state.cameraReducer.isCameraOpen,
+    currentCamera: state.cameraReducer.camera,
     leftDoor: state.officeReducer.leftDoor,
     rightDoor: state.officeReducer.rightDoor,
-    animatronics: state.animatronicsReducer,
-    config: state.configReducer,
+    foxyBlockCount: state.configReducer.foxyBlockCount,
   };
 };
 

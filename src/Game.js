@@ -1,124 +1,147 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useCallback } from "react";
 import { connect } from "react-redux";
+import sounds from "./components/SoundEffects";
 
 import Animatronic from "./components/Animatronic";
 import Office from "./components/Office";
 import Camera from "./components/Camera";
 import Hud from "./components/Hud";
-import Media from "./components/Media";
 
-let isBlackout = false;
-
-let { Ambience } = Media.Sounds;
-Ambience.loop = true;
-
-let officeProps = { leftDoor: false, rightDoor: false };
-
-const Game = ({
+function Game({
   office,
+  animatronics,
   isCameraOpen,
-  energy,
+  truePower,
+  blackout,
   gameOver,
   stages,
   endGame,
+  onFoxyDoorBash,
   dispatch,
-}) => {
+}) {
   useEffect(() => {
-    Ambience.currentTime = 0;
-    Ambience.play();
-    isBlackout = false;
-    officeProps = { leftDoor: false, rightDoor: false };
+    sounds.playOfficeAmbience();
+    return () => {
+      sounds.stopOfficeAmbience();
+    };
   }, []);
 
   useEffect(() => {
-    if (gameOver) Ambience.pause();
-  }, [gameOver]);
-
-  useEffect(() => {
-    if (energy <= 0) {
-      isBlackout = true;
-      Ambience.pause();
+    if (gameOver || blackout) {
+      sounds.stopOfficeAmbience();
     }
-  }, [energy]);
+  }, [gameOver, blackout]);
 
+  // Keyboard shortcuts listener
   useEffect(() => {
-    let newTime = 6300;
-    if (office.leftDoor) newTime -= 1100;
-    if (office.rightDoor) newTime -= 1100;
-    if (office.leftLight) newTime -= 500;
-    if (office.rightLight) newTime -= 500;
-    if (isCameraOpen) newTime -= 1100;
+    const handleKeyDown = (e) => {
+      if (gameOver || blackout) return;
+      const key = e.key.toLowerCase();
+      const code = e.code;
 
-    dispatch({ type: "CHANGE_TIME", content: newTime });
-    officeProps = {
-      leftDoor: office.leftDoor,
-      rightDoor: office.rightDoor,
+      // Space toggles Camera monitor up / down
+      if (code === "Space") {
+        e.preventDefault();
+        sounds.playCameraToggle();
+        dispatch({ type: "SET_IS_OPEN" });
+        return;
+      }
+
+      // If camera monitor is up, door/light shortcuts shouldn't toggle
+      if (isCameraOpen) return;
+
+      // [A] or [Q] -> Left Door
+      if (key === "a" || key === "q") {
+        e.preventDefault();
+        sounds.playDoor();
+        dispatch({ type: "CHANGE_OFFICE_CONFIG", obj: "leftDoor" });
+      }
+      // [S] or [W] -> Left Light
+      else if (key === "s" || key === "w") {
+        e.preventDefault();
+        sounds.playLight();
+        if (!office.leftLight && animatronics.Bonnie && animatronics.Bonnie.door) {
+          sounds.playWindowScare();
+        }
+        dispatch({ type: "CHANGE_OFFICE_CONFIG", obj: "leftLight" });
+      }
+      // [D] or [E] -> Right Door
+      else if (key === "d" || key === "e") {
+        e.preventDefault();
+        sounds.playDoor();
+        dispatch({ type: "CHANGE_OFFICE_CONFIG", obj: "rightDoor" });
+      }
+      // [F] or [R] -> Right Light
+      else if (key === "f" || key === "r") {
+        e.preventDefault();
+        sounds.playLight();
+        if (!office.rightLight && animatronics.Chica && animatronics.Chica.door) {
+          sounds.playWindowScare();
+        }
+        dispatch({ type: "CHANGE_OFFICE_CONFIG", obj: "rightLight" });
+      }
     };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [gameOver, blackout, isCameraOpen, office, animatronics, dispatch]);
+
+  // Compute active usage bars:
+  // Base 1 bar (fan) + 1 monitor + 1 leftDoor + 1 rightDoor + 1 leftLight + 1 rightLight
+  useEffect(() => {
+    let bars = 1;
+    if (isCameraOpen) bars += 1;
+    if (office.leftDoor) bars += 1;
+    if (office.rightDoor) bars += 1;
+    if (office.leftLight) bars += 1;
+    if (office.rightLight) bars += 1;
+
+    dispatch({ type: "SET_USAGE_BARS", bars });
   }, [
+    isCameraOpen,
     office.leftDoor,
     office.rightDoor,
     office.leftLight,
     office.rightLight,
-    isCameraOpen,
+    dispatch,
   ]);
 
-  const handleJumpscare = (character) => {
-    if (isBlackout || gameOver) return;
-    dispatch({
-      type: "CHANGE_ANIMATRONIC",
-      animatronic: character,
-      animatronicState: {
-        door: null,
-        camera: null,
-        jumpscare: true,
-      },
-    });
-
-    dispatch({ type: "CHANGE_JUMPSCARE", animatronic: character });
-    if (character === "Foxy" || character === "Freddy")
+  const handleJumpscare = useCallback(
+    (character) => {
       dispatch({ type: "FORCE_CAMERA_CLOSE" });
-    setTimeout(() => {
-      if (!isCameraOpen) dispatch({ type: "FORCE_CAMERA_CLOSE" });
-    }, 10000);
-  };
-
-  async function isThisDoorOpen(door) {
-    const isDoorOpen = await officeProps[door];
-    return isDoorOpen;
-  }
+      dispatch({ type: "CHANGE_JUMPSCARE", animatronic: character });
+    },
+    [dispatch]
+  );
 
   return (
     <>
       <Animatronic
         stages={stages}
         handleJumpscare={handleJumpscare}
-        gameOver={gameOver}
-        isThisDoorOpen={isThisDoorOpen}
-        blackout={energy <= 0}
+        onFoxyDoorBash={onFoxyDoorBash}
       />
 
-      {!gameOver ? (
+      {!gameOver && (
         <>
-          {energy <= 0 ? null : <Hud />}
-          <Camera handleJumpscare={handleJumpscare} />
-          {isCameraOpen ? null : (
-            <Office endGame={endGame} blackout={energy <= 0} />
+          {!blackout && <Hud />}
+          <Camera />
+          {!isCameraOpen && (
+            <Office endGame={endGame} blackout={blackout} />
           )}
         </>
-      ) : null}
+      )}
     </>
   );
-};
+}
 
 const mapStateToProps = (state) => {
   return {
-    animatronics: state.animatronicsReducer,
-    time: state.configReducer.time,
-    hour: state.configReducer.hour,
-    energy: state.configReducer.energy,
     office: state.officeReducer,
-    camera: state.cameraReducer.camera,
+    animatronics: state.animatronicsReducer,
     isCameraOpen: state.cameraReducer.isCameraOpen,
+    truePower: state.configReducer.truePower,
+    blackout: state.configReducer.blackout,
   };
 };
 
