@@ -20,11 +20,9 @@ const Start = () => {
   const [stages, setStages] = useState(initialState);
 
   useEffect(() => {
-    console.log(window.innerHeight > window.innerWidth);
     if (window.innerHeight > window.innerWidth) {
-      window.alert(
-        `Para uma melhor experiência, vire seu celular para o modo de paisagem (modo deitado)
-                 ~ For a better experience, please rotate your phone to landscape mode`
+      console.warn(
+        "For a better experience, please rotate your device to landscape mode."
       );
     }
   }, []);
@@ -52,4 +50,4 @@ ReactDOM.render(
   document.getElementById("root")
 );
 
-serviceWorker.register();
+serviceWorker.unregister();
